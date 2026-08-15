@@ -1,0 +1,45 @@
+name: HA-010 Zod Artifact
+
+on:
+  push:
+    branches:
+      - test/ha010-zod-artifact
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download official npm tarball
+        run: npm pack zod@4.4.3 --ignore-scripts
+
+      - name: Verify lockfile integrity and package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=='
+          actual="$(openssl dgst -sha512 -binary zod-4.4.3.tgz | openssl base64 -A)"
+          test "$actual" = "$expected"
+          tar -xOf zod-4.4.3.tgz package/package.json > zod-package.json
+          node -e "const p=require('./zod-package.json'); if(p.name!=='zod'||p.version!=='4.4.3') throw new Error(JSON.stringify(p)); console.log(p.name+'@'+p.version)"
+          printf '%s  %s\n' "$actual" zod-4.4.3.tgz > zod-4.4.3.sha512
+
+      - name: Upload verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: zod-4.4.3-official
+          path: |
+            zod-4.4.3.tgz
+            zod-4.4.3.sha512
+            zod-package.json
+          if-no-files-found: error
+          retention-days: 1
