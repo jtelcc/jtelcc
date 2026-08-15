@@ -1,4 +1,4 @@
-name: HA-010 Zod Artifact
+name: HA-010 Official Zod Gate
 
 on:
   push:
@@ -43,3 +43,81 @@ jobs:
             zod-package.json
           if-no-files-found: error
           retention-days: 1
+
+  verify-private-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check private repository access
+        id: access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /tmp/heuratlas-repo.json -w '%{http_code}' \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            https://api.github.com/repos/jtelcc/HeurAtlas)"
+          echo "HTTP status: ${status}"
+          test "${status}" = '200'
+
+      - name: Download PR branch source without publishing it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ha010
+          curl -fsSL \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            -o /tmp/ha010.zip \
+            https://api.github.com/repos/jtelcc/HeurAtlas/zipball/task/HA-010/exploration-state-contract
+          unzip -q /tmp/ha010.zip -d /tmp/ha010
+          root="$(find /tmp/ha010 -mindepth 1 -maxdepth 1 -type d | head -1)"
+          test -n "${root}"
+          mv "${root}" /tmp/heuratlas
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: pnpm
+          cache-dependency-path: /tmp/heuratlas/pnpm-lock.yaml
+
+      - name: Enable pinned pnpm
+        working-directory: /tmp/heuratlas
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          pnpm --version
+
+      - name: Install official dependencies
+        working-directory: /tmp/heuratlas
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Verify official Zod identity
+        working-directory: /tmp/heuratlas
+        run: |
+          node --input-type=module -e "import pkg from './node_modules/zod/package.json' with { type: 'json' }; if (pkg.version !== '4.4.3') throw new Error('Expected zod 4.4.3, got ' + pkg.version); console.log('zod=' + pkg.version)"
+
+      - name: Preserve committed schemas
+        run: cp -R /tmp/heuratlas/schemas /tmp/heuratlas-schemas-before
+
+      - name: Build
+        working-directory: /tmp/heuratlas
+        run: pnpm run build
+
+      - name: Regenerate schemas
+        working-directory: /tmp/heuratlas
+        run: pnpm run schemas
+
+      - name: Assert generated schemas are unchanged
+        run: diff -ru /tmp/heuratlas-schemas-before /tmp/heuratlas/schemas
+
+      - name: Full verification
+        working-directory: /tmp/heuratlas
+        run: pnpm run verify
